@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Playwright outputs (regenerated on each run)
+playwright-report/
+test-results/
+
+# Screenshots — optionally commit these if you want visual baselines
+# screenshots/
+
+# macOS
+.DS_Store
+
+# TypeScript build output
+dist/
+
+# Environment variables (never commit secrets!)
+.env
+.env.local
+.env.*.local

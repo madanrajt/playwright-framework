@@ -1,0 +1,203 @@
+# ============================================================
+# PLAYWRIGHT CI/CD PIPELINE — GitHub Actions
+# ============================================================
+# WHAT THIS FILE DOES (step by step):
+#
+#  TRIGGER → when code is pushed or a PR is opened
+#  STEP 1  → Checkout your code from GitHub
+#  STEP 2  → Set up Node.js
+#  STEP 3  → Install npm dependencies (with cache)
+#  STEP 4  → Install Playwright browsers (with cache)
+#  STEP 5  → Run Playwright tests (headless, CI-safe)
+#  STEP 6  → Upload HTML report as artifact
+#  STEP 7  → Upload screenshots/videos as artifact
+#  STEP 8  → (on main branch only) Deploy report to GitHub Pages
+# ============================================================
+
+name: Playwright Tests
+
+# ── TRIGGERS ──────────────────────────────────────────────────────────────────
+# When does this pipeline run?
+on:
+  push:
+    branches:
+      - main        # Every push to main branch
+      - develop     # Every push to develop branch
+  pull_request:
+    branches:
+      - main        # Every PR targeting main
+      - develop     # Every PR targeting develop
+  workflow_dispatch:  # Allows manual trigger from GitHub UI (Actions tab → Run workflow)
+
+# ── JOBS ──────────────────────────────────────────────────────────────────────
+jobs:
+
+  # ════════════════════════════════════════════════════════════
+  # JOB 1: RUN PLAYWRIGHT TESTS
+  # ════════════════════════════════════════════════════════════
+  test:
+    name: Run Playwright Tests
+    runs-on: ubuntu-latest     # Runs on GitHub's free Linux machine
+
+    # Timeout for the entire job (minutes)
+    timeout-minutes: 30
+
+    steps:
+
+      # ── STEP 1: Get your code ────────────────────────────────
+      # Downloads your repo code onto the GitHub runner machine
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # ── STEP 2: Set up Node.js ───────────────────────────────
+      # Installs the correct Node version (matches your local setup)
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'         # LTS version — stable & compatible
+          cache: 'npm'               # Caches node_modules between runs (faster!)
+
+      # ── STEP 3: Install npm dependencies ────────────────────
+      # Runs "npm ci" (cleaner than "npm install" for CI)
+      # "npm ci" reads package-lock.json exactly — no surprises
+      - name: Install Dependencies
+        run: npm ci
+
+      # ── STEP 4: Cache Playwright browsers ───────────────────
+      # Playwright downloads Chromium/Firefox/WebKit (~300MB)
+      # Caching avoids re-downloading on every run → saves ~2 min
+      - name: Cache Playwright Browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-browsers-${{ runner.os }}-
+
+      # ── STEP 5: Install Playwright browsers ─────────────────
+      # Only installs if cache was NOT found (saves time!)
+      - name: Install Playwright Browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+        # "--with-deps" installs Linux system libs Playwright needs
+        # "chromium" only — no need for Firefox/WebKit unless you add them
+
+      # Also install system deps if cache was hit (needed even with cached browsers)
+      - name: Install Playwright System Dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      # ── STEP 6: Run Tests ────────────────────────────────────
+      # KEY: We override two settings that don't work in CI:
+      #   - headless: true  (no screen in CI — must be headless)
+      #   - open: never     (don't try to open browser for HTML report)
+      - name: Run Playwright Tests
+        run: npx playwright test
+        env:
+          CI: true    # Tells Playwright to run in CI mode automatically
+          # CI=true in Playwright automatically sets:
+          #   - headless: true  (overrides your config's headless: false)
+          #   - reporter output goes to stdout (no browser opens)
+
+      # ── STEP 7: Upload HTML Test Report ─────────────────────
+      # Even if tests FAIL, upload the report so you can see why
+      # Available in: Actions tab → your run → Artifacts section
+      - name: Upload Playwright HTML Report
+        uses: actions/upload-artifact@v4
+        if: always()    # Upload even if tests failed!
+        with:
+          name: playwright-html-report
+          path: playwright-report/
+          retention-days: 30    # Keep for 30 days, then auto-delete
+
+      # ── STEP 8: Upload Screenshots & Videos ─────────────────
+      # Captures visual proof of what happened during the test run
+      - name: Upload Screenshots
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-screenshots
+          path: screenshots/
+          retention-days: 30
+
+      - name: Upload Test Results (Videos)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-test-results
+          path: test-results/
+          retention-days: 7     # Videos are large — keep for 7 days only
+
+  # ════════════════════════════════════════════════════════════
+  # JOB 2: DEPLOY REPORT TO GITHUB PAGES
+  # Runs AFTER the test job, ONLY on the main branch
+  # Makes your HTML report publicly viewable at:
+  # https://<your-username>.github.io/<your-repo>/
+  # ════════════════════════════════════════════════════════════
+  deploy-report:
+    name: Deploy Report to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: test           # Only runs after "test" job completes
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # ↑ Only deploy on direct pushes to main (not PRs)
+
+    # Required permissions for GitHub Pages deployment
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Restore Playwright Browser Cache
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Playwright Browsers (if not cached)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Playwright System Dependencies (if cached)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+
+      - name: Run Tests and Generate Report
+        run: npx playwright test
+        env:
+          CI: true
+
+      # Change report's "open" setting to never for static hosting
+      - name: Generate Static Report
+        run: npx playwright show-report --host 0.0.0.0 &
+        continue-on-error: true
+
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload Report to GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: playwright-report/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

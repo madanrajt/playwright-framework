@@ -1,0 +1,16 @@
+{
+  "name": "playwright-framework",
+  "version": "1.0.0",
+  "description": "Production-grade Playwright framework with Page Object Model",
+  "type": "module",
+  "scripts": {
+    "test": "npx playwright test",
+    "report": "npx playwright show-report playwright-report",
+    "test:report": "npx playwright test && npx playwright show-report playwright-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/node": "^25.9.1",
+    "typescript": "^5.4.5"
+  }
+}
